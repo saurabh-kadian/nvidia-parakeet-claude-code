@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""
+Parakeet TDT push-to-talk daemon.
+Hold the '|' (pipe) key to record mic audio.
+Release to transcribe via Parakeet TDT 0.6B v3 and paste into the focused window.
+"""
+
+import os
+import sys
+import signal
+import tempfile
+import threading
+import subprocess
+import atexit
+import numpy as np
+
+PID_FILE = "/tmp/parakeet_listener.pid"
+SAMPLE_RATE = 16000          # Parakeet expects 16 kHz mono
+MIN_DURATION_SEC = 0.3       # ignore accidental taps shorter than this
+MODEL_NAME = "nvidia/parakeet-tdt-0.6b-v3"
+
+# Resolve cache dirs relative to this script's location so the listener
+# finds weights even when launched from a different working directory.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_CACHE_DIR = os.path.join(_SCRIPT_DIR, "model_cache")
+os.environ.setdefault("HF_HOME", os.path.join(_CACHE_DIR, "huggingface"))
+os.environ.setdefault("NEMO_CACHE_DIR", os.path.join(_CACHE_DIR, "nemo"))
+os.environ.setdefault("TORCH_HOME", os.path.join(_CACHE_DIR, "torch"))
+
+
+# ── PID file management ────────────────────────────────────────────────────────
+
+def _write_pid():
+    with open(PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+def _remove_pid():
+    try:
+        os.unlink(PID_FILE)
+    except FileNotFoundError:
+        pass
+
+atexit.register(_remove_pid)
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+_write_pid()
+
+
+# ── Model loading ──────────────────────────────────────────────────────────────
+
+print("[parakeet] Loading model — this takes ~10-20 s on first run...", flush=True)
+import nemo.collections.asr as nemo_asr
+
+asr_model = nemo_asr.models.ASRModel.from_pretrained(MODEL_NAME)
+asr_model.eval()
+print("[parakeet] Model ready. Hold '|' to record.", flush=True)
+
+
+# ── Recording state ────────────────────────────────────────────────────────────
+
+_recording = False
+_audio_chunks: list = []
+_lock = threading.Lock()
+_record_thread: threading.Thread | None = None
+
+
+def _record_loop():
+    import sounddevice as sd
+    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype="float32") as stream:
+        while _recording:
+            chunk, _ = stream.read(1024)
+            with _lock:
+                _audio_chunks.append(chunk[:, 0].copy())
+
+
+def _transcribe_and_paste():
+    import soundfile as sf
+
+    with _lock:
+        data = np.concatenate(_audio_chunks) if _audio_chunks else np.array([])
+
+    if len(data) < SAMPLE_RATE * MIN_DURATION_SEC:
+        print("[parakeet] Clip too short — ignored.", flush=True)
+        return
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            tmp_path = f.name
+            sf.write(tmp_path, data, SAMPLE_RATE)
+
+        output = asr_model.transcribe([tmp_path])
+        # NeMo TDT output: list of Hypothesis objects with .text attribute
+        text = (output[0].text if hasattr(output[0], "text") else str(output[0])).strip()
+
+        if not text:
+            print("[parakeet] Empty transcription.", flush=True)
+            return
+
+        print(f"[parakeet] Transcribed: {text}", flush=True)
+
+        # ── Clipboard + paste ──────────────────────────────────────────────────
+        # Choose the clipboard tool that matches your system, then choose the
+        # paste shortcut that matches your terminal emulator. Only one of each
+        # block should be active at a time.
+
+        # --- Clipboard: xclip (default, most common on Ubuntu/Debian) ---
+        proc = subprocess.run(
+            ["xclip", "-selection", "clipboard"],
+            input=text.encode(),
+            capture_output=True,
+        )
+        if proc.returncode != 0:
+            print(f"[parakeet] xclip error: {proc.stderr.decode()}", flush=True)
+            return
+
+        # --- Clipboard: xsel (alternative to xclip — install with: sudo apt install xsel) ---
+        # subprocess.run(["xsel", "--clipboard", "--input"], input=text.encode(), check=True)
+
+        # --- Clipboard: wl-copy (Wayland sessions — install with: sudo apt install wl-clipboard) ---
+        # subprocess.run(["wl-copy"], input=text.encode(), check=True)
+
+        # ── Paste shortcut ─────────────────────────────────────────────────────
+        # Pick the line that matches your terminal emulator.
+
+        # Ctrl+Shift+V — standard for most Linux terminals (gnome-terminal, xterm, alacritty, kitty)
+        subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+shift+v"])
+
+        # Ctrl+V — works in some terminals (Windows-style, VS Code integrated terminal)
+        # subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+v"])
+
+        # Shift+Insert — works universally in almost all X11 terminals as a fallback
+        # subprocess.run(["xdotool", "key", "--clearmodifiers", "shift+Insert"])
+
+        # Type directly — bypasses clipboard entirely; safe for plain ASCII but
+        # may mangle special characters (quotes, brackets, etc.)
+        # subprocess.run(["xdotool", "type", "--clearmodifiers", "--", text])
+
+    except Exception as exc:
+        print(f"[parakeet] Error during transcription: {exc}", flush=True)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+# ── Key listener ───────────────────────────────────────────────────────────────
+
+from pynput import keyboard
+
+
+def on_press(key):
+    global _recording, _record_thread
+    try:
+        if key.char == "|" and not _recording:
+            _recording = True
+            with _lock:
+                _audio_chunks.clear()
+            _record_thread = threading.Thread(target=_record_loop, daemon=True)
+            _record_thread.start()
+            print("[parakeet] Recording...", flush=True)
+    except AttributeError:
+        pass
+
+
+def on_release(key):
+    global _recording
+    try:
+        if key.char == "|" and _recording:
+            _recording = False
+            if _record_thread:
+                _record_thread.join(timeout=3)
+            threading.Thread(target=_transcribe_and_paste, daemon=True).start()
+    except AttributeError:
+        pass
+
+
+print("[parakeet] Keyboard listener active.", flush=True)
+with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+    listener.join()
