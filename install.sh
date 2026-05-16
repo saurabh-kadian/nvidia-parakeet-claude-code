@@ -42,7 +42,7 @@ echo ""
 echo "→ Checking system packages..."
 
 MISSING_APT=()
-for pkg in xclip xdotool python3.10 python3.10-venv python3.10-dev libsndfile1 ffmpeg portaudio19-dev; do
+for pkg in xclip xdotool python3.10 python3.10-venv python3.10-dev libsndfile1 ffmpeg portaudio19-dev libnotify-bin; do
     if ! dpkg -s "$pkg" &>/dev/null; then
         MISSING_APT+=("$pkg")
     fi
@@ -138,27 +138,49 @@ PYEOF
 # ── Launcher script ───────────────────────────────────────────────────────────
 
 LAUNCHER="$SCRIPT_DIR/start_listener.sh"
-cat > "$LAUNCHER" <<SHEOF
+cat > "$LAUNCHER" <<'SHEOF'
 #!/bin/bash
-# Start the Parakeet push-to-talk listener as a background daemon.
-SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="\$SCRIPT_DIR/env"
-CACHE_DIR="\$SCRIPT_DIR/model_cache"
+# Start the Parakeet push-to-talk listener and wait until the model is ready.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_DIR="$SCRIPT_DIR/env"
+CACHE_DIR="$SCRIPT_DIR/model_cache"
 PID_FILE="/tmp/parakeet_listener.pid"
 LOG_FILE="/tmp/parakeet_listener.log"
 
-if [ -f "\$PID_FILE" ] && kill -0 "\$(cat "\$PID_FILE")" 2>/dev/null; then
-    echo "[parakeet] Already running (PID \$(cat "\$PID_FILE"))"
+if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    echo "[parakeet] Already running (PID $(cat "$PID_FILE"))"
     exit 0
 fi
 
-echo "[parakeet] Starting listener..."
-HF_HOME="\$CACHE_DIR/huggingface" \\
-NEMO_CACHE_DIR="\$CACHE_DIR/nemo" \\
-TORCH_HOME="\$CACHE_DIR/torch" \\
-nohup "\$VENV_DIR/bin/python" "\$SCRIPT_DIR/listener.py" > "\$LOG_FILE" 2>&1 &
-echo \$! > "\$PID_FILE"
-echo "[parakeet] Started (PID \$(cat "\$PID_FILE")) — log: \$LOG_FILE"
+echo "[parakeet] Starting listener (model load takes ~20s)..."
+> "$LOG_FILE"
+HF_HOME="$CACHE_DIR/huggingface" \
+NEMO_CACHE_DIR="$CACHE_DIR/nemo" \
+TORCH_HOME="$CACHE_DIR/torch" \
+DISPLAY="${DISPLAY:-:0}" \
+DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS}" \
+nohup "$VENV_DIR/bin/python" "$SCRIPT_DIR/listener.py" > "$LOG_FILE" 2>&1 &
+echo $! > "$PID_FILE"
+
+TIMEOUT=90
+ELAPSED=0
+while [ $ELAPSED -lt $TIMEOUT ]; do
+    if grep -q "Keyboard listener active" "$LOG_FILE" 2>/dev/null; then
+        echo "[parakeet] Ready — hold F9 to record."
+        exit 0
+    fi
+    if ! kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "[parakeet] Process crashed. Check $LOG_FILE"
+        exit 1
+    fi
+    sleep 1
+    ELAPSED=$((ELAPSED + 1))
+    printf "\r[parakeet] Loading model... %ds" "$ELAPSED"
+done
+
+echo ""
+echo "[parakeet] Timed out after ${TIMEOUT}s. Check $LOG_FILE"
+exit 1
 SHEOF
 chmod +x "$LAUNCHER"
 

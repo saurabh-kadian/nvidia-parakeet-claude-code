@@ -2,7 +2,7 @@
 
 A push-to-talk voice dictation tool that uses NVIDIA's Parakeet TDT 0.6B v3 ASR model to transcribe speech and paste it directly into Claude Code (or any focused terminal window).
 
-Hold `|` (pipe key) → speak → release → text appears in Claude Code.
+Hold `F9` → speak → release → text appears in Claude Code.
 
 ## Requirements
 
@@ -102,11 +102,13 @@ Find the `── Clipboard ──` section in `listener.py`:
 
 ### Push-to-talk key
 
-Change the key by editing the two `key.char == "|"` checks in `listener.py` to any single character. For a non-character key (e.g. F9), use pynput's `keyboard.Key` constants instead:
+Change `PTT_KEY` near the top of `listener.py` to any `pynput.keyboard.Key` name. It must be a non-character key (function key, scroll lock, pause, etc.) so it doesn't also type into the focused window.
 
 ```python
-# Example: use F9 instead of |
-if key == keyboard.Key.f9 and not _recording:
+PTT_KEY = "f9"       # default
+PTT_KEY = "f10"      # alternative
+PTT_KEY = "scroll_lock"
+PTT_KEY = "pause"
 ```
 
 ## Why NeMo (not Hugging Face Transformers)?

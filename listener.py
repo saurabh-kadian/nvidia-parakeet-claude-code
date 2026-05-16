@@ -19,6 +19,11 @@ SAMPLE_RATE = 16000          # Parakeet expects 16 kHz mono
 MIN_DURATION_SEC = 0.3       # ignore accidental taps shorter than this
 MODEL_NAME = "nvidia/parakeet-tdt-0.6b-v3"
 
+# Push-to-talk key. Must be a pynput keyboard.Key constant (not a character)
+# so it doesn't also type into the focused window. F9 is the default.
+# Other options: keyboard.Key.f10, keyboard.Key.scroll_lock, keyboard.Key.pause
+PTT_KEY = "f9"
+
 # Resolve cache dirs relative to this script's location so the listener
 # finds weights even when launched from a different working directory.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -52,7 +57,11 @@ import nemo.collections.asr as nemo_asr
 
 asr_model = nemo_asr.models.ASRModel.from_pretrained(MODEL_NAME)
 asr_model.eval()
-print("[parakeet] Model ready. Hold '|' to record.", flush=True)
+print(f"[parakeet] Model ready. Hold {PTT_KEY.upper()} to record.", flush=True)
+subprocess.run(
+    ["notify-send", "-i", "audio-input-microphone", "Parakeet ready", f"Hold {PTT_KEY.upper()} to record"],
+    capture_output=True,  # silently skip if notify-send is not installed
+)
 
 
 # ── Recording state ────────────────────────────────────────────────────────────
@@ -61,6 +70,7 @@ _recording = False
 _audio_chunks: list = []
 _lock = threading.Lock()
 _record_thread: threading.Thread | None = None
+_target_window: str = ""  # X11 window ID captured at press time, used for paste
 
 
 def _record_loop():
@@ -122,8 +132,14 @@ def _transcribe_and_paste():
         # ── Paste shortcut ─────────────────────────────────────────────────────
         # Pick the line that matches your terminal emulator.
 
+        # Re-focus the window that was active when F9 was pressed, then paste.
+        # windowfocus --sync blocks until focus is confirmed before sending the key.
+        if _target_window:
+            subprocess.run(["xdotool", "windowfocus", "--sync", _target_window], capture_output=True)
+
         # Ctrl+Shift+V — standard for most Linux terminals (gnome-terminal, xterm, alacritty, kitty)
-        subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+shift+v"])
+        result = subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+shift+v"], capture_output=True)
+        print(f"[parakeet] paste exit={result.returncode}", flush=True)
 
         # Ctrl+V — works in some terminals (Windows-style, VS Code integrated terminal)
         # subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+v"])
@@ -132,8 +148,9 @@ def _transcribe_and_paste():
         # subprocess.run(["xdotool", "key", "--clearmodifiers", "shift+Insert"])
 
         # Type directly — bypasses clipboard entirely; safe for plain ASCII but
-        # may mangle special characters (quotes, brackets, etc.)
-        # subprocess.run(["xdotool", "type", "--clearmodifiers", "--", text])
+        # may mangle special characters (quotes, brackets, etc.).
+        # --delay 12 is 12ms between keystrokes, not seconds — prevents terminal buffer overflow.
+        # subprocess.run(["xdotool", "type", "--clearmodifiers", "--delay", "12", "--", text])
 
     except Exception as exc:
         print(f"[parakeet] Error during transcription: {exc}", flush=True)
@@ -147,32 +164,41 @@ def _transcribe_and_paste():
 from pynput import keyboard
 
 
+_PTT = getattr(keyboard.Key, PTT_KEY)
+
 def on_press(key):
-    global _recording, _record_thread
-    try:
-        if key.char == "|" and not _recording:
-            _recording = True
-            with _lock:
-                _audio_chunks.clear()
-            _record_thread = threading.Thread(target=_record_loop, daemon=True)
-            _record_thread.start()
-            print("[parakeet] Recording...", flush=True)
-    except AttributeError:
-        pass
+    global _recording, _record_thread, _target_window
+    if key == _PTT and not _recording:
+        # Capture the focused window NOW so paste targets it even after a delay
+        result = subprocess.run(["xdotool", "getactivewindow"], capture_output=True, text=True)
+        _target_window = result.stdout.strip()
+        _recording = True
+        with _lock:
+            _audio_chunks.clear()
+        _record_thread = threading.Thread(target=_record_loop, daemon=True)
+        _record_thread.start()
+        print(f"[parakeet] Recording... (window {_target_window})", flush=True)
+        subprocess.run(
+            ["notify-send", "-i", "audio-input-microphone", "-t", "60000",
+             "🎙 Recording", f"Release {PTT_KEY.upper()} to transcribe"],
+            capture_output=True,
+        )
 
 
 def on_release(key):
     global _recording
-    try:
-        if key.char == "|" and _recording:
-            _recording = False
-            if _record_thread:
-                _record_thread.join(timeout=3)
-            threading.Thread(target=_transcribe_and_paste, daemon=True).start()
-    except AttributeError:
-        pass
+    if key == _PTT and _recording:
+        _recording = False
+        if _record_thread:
+            _record_thread.join(timeout=3)
+        subprocess.run(
+            ["notify-send", "-i", "system-run", "-t", "4000",
+             "⏳ Transcribing", "Parakeet is processing your audio..."],
+            capture_output=True,
+        )
+        threading.Thread(target=_transcribe_and_paste, daemon=True).start()
 
 
-print("[parakeet] Keyboard listener active.", flush=True)
+print(f"[parakeet] Keyboard listener active. Hold {PTT_KEY.upper()} to record.", flush=True)
 with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
     listener.join()
