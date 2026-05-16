@@ -6,6 +6,7 @@ Release to transcribe via Parakeet TDT 0.6B v3 and paste into the focused window
 """
 
 import os
+import re
 import sys
 import signal
 import tempfile
@@ -28,6 +29,19 @@ PTT_KEY = "f9"
 # finds weights even when launched from a different working directory.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _CACHE_DIR = os.path.join(_SCRIPT_DIR, "model_cache")
+
+# Load corrections — reload on each transcription so edits take effect without restart
+def _apply_corrections(text: str) -> str:
+    try:
+        import importlib.util, sys as _sys
+        spec = importlib.util.spec_from_file_location("corrections", os.path.join(_SCRIPT_DIR, "corrections.py"))
+        mod = importlib.util.load_from_spec(spec)
+        spec.loader.exec_module(mod)
+        for pattern, replacement in mod.CORRECTIONS:
+            text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    except Exception as e:
+        print(f"[parakeet] corrections skipped: {e}", flush=True)
+    return text
 os.environ.setdefault("HF_HOME", os.path.join(_CACHE_DIR, "huggingface"))
 os.environ.setdefault("NEMO_CACHE_DIR", os.path.join(_CACHE_DIR, "nemo"))
 os.environ.setdefault("TORCH_HOME", os.path.join(_CACHE_DIR, "torch"))
@@ -106,6 +120,7 @@ def _transcribe_and_paste():
             print("[parakeet] Empty transcription.", flush=True)
             return
 
+        text = _apply_corrections(text)
         print(f"[parakeet] Transcribed: {text}", flush=True)
 
         # ── Clipboard + paste ──────────────────────────────────────────────────
