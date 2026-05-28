@@ -367,3 +367,7 @@ If you want to avoid NeMo, swap in `nvidia/parakeet-ctc-0.6b` with standard `tra
 
 Model weights: [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) (NVIDIA)  
 This repo: MIT
+
+---
+
+## Code and Readme courtesy ClaudeCode
