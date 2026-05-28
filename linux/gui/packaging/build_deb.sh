@@ -1,8 +1,9 @@
 #!/bin/bash
 # Build a .deb for parakeet-ptt.
-# Run from the repo root: bash packaging/build_deb.sh
+# Run from anywhere: bash linux/gui/packaging/build_deb.sh
 set -euo pipefail
 
+# Script lives at linux/gui/packaging/ — GUI root is one level up
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PKG="parakeet-ptt"
 VERSION="1.0.0"

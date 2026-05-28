@@ -1,0 +1,16 @@
+# Runtime dependencies for the Windows GUI app
+# Install into the user venv via the setup wizard, or manually:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+#   pip install -r requirements.txt
+
+nemo_toolkit[asr]   # ASR — same as Linux (Parakeet TDT 0.6B v3 via NeMo)
+sounddevice         # microphone capture (PortAudio)
+soundfile           # WAV I/O
+pynput              # global key listener + keyboard simulation for paste
+pyperclip           # clipboard (replaces xclip)
+pywin32             # win32gui for window focus
+plyer               # cross-platform desktop notifications
+PyQt5               # settings window, wizard, stats window
+pystray             # system tray icon
+Pillow              # required by pystray for icon images
+pyinstaller         # packaging only — needed to build .exe
