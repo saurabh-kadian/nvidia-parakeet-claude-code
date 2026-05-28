@@ -8,50 +8,77 @@ No API calls. No audio leaves your machine. ~3,000× real-time on a mid-range GP
 
 ---
 
+## Repository layout
+
+```
+parakeet/
+├── linux/
+│   ├── gui/                    GTK3 tray app (Ubuntu / Debian)
+│   │   ├── parakeet_ptt/       Python package
+│   │   │   ├── main.py         entry point
+│   │   │   ├── tray.py         AppIndicator3 system tray
+│   │   │   ├── wizard.py       first-run setup wizard
+│   │   │   ├── settings_win.py corrections, key binding, system settings
+│   │   │   ├── stats_win.py    usage stats popup
+│   │   │   ├── listener.py     push-to-talk daemon
+│   │   │   ├── config.py       config r/w, path constants
+│   │   │   ├── telemetry.py    event logger
+│   │   │   └── stats.py        report generator
+│   │   ├── data/
+│   │   │   ├── icons/          tray icon (SVG)
+│   │   │   └── parakeet-ptt.desktop
+│   │   └── packaging/
+│   │       ├── build_deb.sh    builds .deb package
+│   │       └── debian/         dpkg control files
+│   └── terminal/               Headless / script mode
+│       ├── listener.py         push-to-talk daemon (standalone)
+│       ├── corrections.py      vocabulary corrections (edit this)
+│       ├── telemetry.py        event logger
+│       ├── stats.py            CLI stats report
+│       ├── install.sh          one-shot setup script
+│       ├── start_listener.sh   generated launcher
+│       └── INSTALL.md          detailed setup & troubleshooting
+├── windows/                    Windows GUI app (PyQt5 + pystray)
+│   ├── parakeet_ptt/           same structure as linux/gui/parakeet_ptt/
+│   ├── data/icons/
+│   ├── packaging/
+│   │   └── build_exe.ps1       PyInstaller .exe builder
+│   └── requirements.txt
+├── mac/
+│   └── MACOS_PLAN.md           implementation plan (not yet built)
+├── README.md
+└── LICENSE
+```
+
+---
+
 ## Requirements
 
 | | |
 |---|---|
-| **OS** | Ubuntu 20.04+ or Debian-based Linux, X11 session |
+| **OS** | Ubuntu 20.04+ / Debian-based Linux (GUI), Windows 10+ (Windows app) |
 | **GPU** | NVIDIA GPU with 4 GB+ VRAM |
 | **Driver** | NVIDIA driver 520+ (CUDA 12.1 compatible) |
 | **Disk** | ~6 GB for virtualenv + model weights |
+| **Display** | X11 session (Linux GUI); Wayland requires substituting `wl-copy` |
 
 ---
 
-## Two ways to install
+## Linux — GUI App (recommended)
 
-| | GUI App | Script |
-|---|---|---|
-| Install | `sudo dpkg -i parakeet-ptt.deb` | `bash install.sh` |
-| Configure | Settings window in the tray | Edit `listener.py` and `corrections.py` |
-| Autostart | Tray app or `.desktop` autostart | Claude Code hook |
-| Best for | Everyday use | Headless / server / CI |
+A system tray app that manages the listener, lets you edit the corrections dictionary, change the push-to-talk key, and pick where the model lives — without touching a config file.
 
----
-
-## Option A — GUI App (recommended)
-
-A system tray app that manages the listener, lets you edit the corrections dictionary, change the push-to-talk key, and pick where the model lives — all without touching a config file.
-
-### 1. Build the package
+### Install
 
 ```bash
 git clone <repo>
 cd parakeet
-bash packaging/build_deb.sh
+bash linux/gui/packaging/build_deb.sh
+sudo dpkg -i linux/gui/parakeet-ptt_1.0.0_amd64.deb
+sudo apt-get install -f          # resolve any missing deps
 ```
 
-This produces `parakeet-ptt_1.0.0_amd64.deb` in the repo root.
-
-### 2. Install
-
-```bash
-sudo dpkg -i parakeet-ptt_1.0.0_amd64.deb
-sudo apt-get install -f          # resolves any missing dependencies
-```
-
-### 3. First run — setup wizard
+### First run — setup wizard
 
 ```bash
 parakeet-ptt
@@ -61,122 +88,101 @@ On first launch a setup wizard opens:
 
 | Step | What happens |
 |---|---|
-| **Virtualenv** | Browse to an existing venv or let the wizard create one at `~/.local/share/parakeet-ptt/env/` |
-| **Model location** | Browse to an existing model download or choose where to save it (~2.4 GB) |
+| **Virtualenv** | Browse to an existing venv or create one at `~/.local/share/parakeet-ptt/env/` |
+| **Model location** | Browse to an existing download or choose where to save (~2.4 GB) |
 | **Install deps** | PyTorch + NeMo ASR installed into the venv (skipped if already present) |
 | **Download model** | Parakeet TDT 0.6B v3 downloaded from HuggingFace (skipped if already present) |
 
-You can cancel at any time. On subsequent launches the wizard is skipped and the tray icon appears immediately.
+You can cancel at any time. Subsequent launches skip the wizard and go straight to the tray.
 
-### 4. Usage
+### Usage
 
 | Action | Result |
 |---|---|
 | Hold **F9** | Mic starts recording |
 | Release **F9** | Audio transcribed → text pasted into focused window |
-| **Tray icon → Settings** | Edit corrections dictionary, change PTT key, change paste method |
-| **Tray icon → Stats** | View latency, word count, GPU memory, paste success rate |
-| **Tray icon → Re-run Setup Wizard** | Change venv or model location, re-download |
-| **Tray icon → Restart Listener** | Pick up config changes immediately |
+| **Tray → Settings** | Edit corrections dictionary, change PTT key, paste method |
+| **Tray → Stats** | Latency, word count, GPU memory, paste success rate |
+| **Tray → Re-run Setup Wizard** | Change venv or model location |
+| **Tray → Restart Listener** | Pick up config changes immediately |
 
 > [!NOTE]
-> **First transcription may not paste automatically.** After the listener starts, the very first recording sometimes lands in the clipboard but does not get pasted into your window — paste it manually with **Ctrl+Shift+V** (or your terminal's paste shortcut). Every recording after that works without any manual step. This is a one-time `xdotool` warm-up quirk and does not recur until the next time the listener process starts.
+> **First transcription may not paste automatically.** After the listener starts, the very first recording sometimes lands in the clipboard but does not get pasted into your window — paste it manually with **Ctrl+Shift+V**. Every recording after that works without any manual step. This is a one-time `xdotool` warm-up quirk.
 
-### 5. Autostart with GNOME
+### Autostart with GNOME
 
 ```bash
-cp data/parakeet-ptt.desktop ~/.config/autostart/
+cp linux/gui/data/parakeet-ptt.desktop ~/.config/autostart/
 ```
 
-The app will start automatically when you log in.
-
-### 6. Autostart with Claude Code
-
-Add to `~/.claude/settings.json` (merge into any existing `hooks` block):
+### Autostart with Claude Code
 
 ```json
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "parakeet-ptt &",
-            "async": true,
-            "statusMessage": "Starting Parakeet PTT..."
-          }
-        ]
-      }
-    ]
+    "SessionStart": [{
+      "hooks": [{
+        "type": "command",
+        "command": "parakeet-ptt &",
+        "async": true,
+        "statusMessage": "Starting Parakeet PTT..."
+      }]
+    }]
   }
 }
 ```
 
 ---
 
-## Option B — Script (headless / no GUI)
+## Linux — Terminal / Headless
 
-The original shell-script approach. No GTK, no tray — just the listener running in the background. Ideal for headless setups, SSH sessions with X forwarding, or if you prefer editing config files directly.
+The original script-based approach — no GTK, no tray, just the listener running in the background. Ideal for SSH sessions, headless servers, or if you prefer editing config files directly.
 
-### 1. Install
+### Install
 
 ```bash
-git clone <repo>
 cd parakeet
-bash install.sh
+bash linux/terminal/install.sh
 ```
 
-The script handles everything:
+The script detects your CUDA version, installs system deps, creates a virtualenv at `linux/terminal/env/`, downloads the model weights (~2.4 GB), and generates `start_listener.sh`.
 
-- Detects your CUDA version from the installed driver
-- Installs Python 3.10, `xclip`, `xdotool`, and audio libraries via `apt`
-- Creates a virtualenv at `parakeet/env/`
-- Downloads Parakeet TDT 0.6B v3 weights into `parakeet/model_cache/` (~2.4 GB)
-- Generates `start_listener.sh`
-
-### 2. Start the listener
+### Start
 
 ```bash
-bash start_listener.sh
+bash linux/terminal/start_listener.sh
 ```
-
-You'll see a live counter while the model loads (~20 s), then:
 
 ```
 [parakeet] Ready — hold F9 to record.
 ```
 
-### 3. Autostart with Claude Code
+### Autostart with Claude Code
 
-At the end of `install.sh`, the exact hook snippet is printed for you. Paste it into `~/.claude/settings.json`:
+The exact hook snippet is printed at the end of `install.sh`. Paste it into `~/.claude/settings.json`:
 
 ```json
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "[ -f /path/to/parakeet/start_listener.sh ] && /path/to/parakeet/start_listener.sh 2>/dev/null || true",
-            "async": true,
-            "statusMessage": "Starting Parakeet listener..."
-          }
-        ]
-      }
-    ]
+    "SessionStart": [{
+      "hooks": [{
+        "type": "command",
+        "command": "[ -f /path/to/linux/terminal/start_listener.sh ] && bash /path/to/linux/terminal/start_listener.sh 2>/dev/null || true",
+        "async": true,
+        "statusMessage": "Starting Parakeet listener..."
+      }]
+    }]
   }
 }
 ```
 
-### 4. Manage the listener
+### Manage the listener
 
 ```bash
 # Check status
 ps -p $(cat /tmp/parakeet_listener.pid)
 
-# View live log
+# Live log
 tail -f /tmp/parakeet_listener.log
 
 # Stop
@@ -185,17 +191,58 @@ kill $(cat /tmp/parakeet_listener.pid)
 
 ---
 
-## Customising the vocabulary (both modes)
+## Windows
 
-### GUI App
+Same Parakeet TDT 0.6B v3 model, same accuracy. Replaces the Linux-specific layer (GTK, xclip, xdotool) with Windows equivalents (PyQt5, pystray, pyperclip, pynput + win32gui).
 
-Open **Tray → Settings → Dictionary**. Add, edit, remove, or reorder regex rules. Changes take effect on the next recording — no restart needed.
+### Requirements
 
-### Script
+- Windows 10 or 11
+- Python 3.10+ from [python.org](https://python.org)
+- NVIDIA GPU with CUDA 12.1 support (driver 520+)
 
-Edit `corrections.py` directly:
+### Run from source
+
+```bash
+# In a Python 3.10+ environment:
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install -r windows/requirements.txt
+
+python windows/parakeet_ptt/main.py
+```
+
+The setup wizard handles the NeMo install and model download on first run.
+
+### Build a standalone `.exe`
+
+```powershell
+cd windows
+powershell -ExecutionPolicy Bypass -File packaging\build_exe.ps1
+# produces dist\Parakeet PTT.exe — no Python install required on target machine
+```
+
+---
+
+## macOS
+
+Not yet implemented. See [`mac/MACOS_PLAN.md`](mac/MACOS_PLAN.md) for the full implementation plan.
+
+The port would use `mlx-whisper` (Apple Silicon) or `whisper.cpp` (Intel), `rumps` for the menu bar, and PyQt5 for settings windows. Estimated ~23 hours of work once a Mac is available for testing.
+
+---
+
+## Customising the vocabulary
+
+### Linux GUI app
+
+**Tray → Settings → Dictionary** — add, edit, remove, or reorder regex rules. Changes take effect on the next recording.
+
+### Linux terminal / Windows
+
+Edit `linux/terminal/corrections.py` (terminal) or `~/.config/parakeet-ptt/corrections.json` (GUI apps):
 
 ```python
+# corrections.py
 CORRECTIONS = [
     (r'\bgemma\s+(?:4|four|for)\s*b\b', 'gemma:4b'),
     (r'\bdeep[\s-]seek\b',              'deepseek'),
@@ -203,19 +250,19 @@ CORRECTIONS = [
 ]
 ```
 
-Each entry is `(regex_pattern, replacement)`, matched case-insensitively in order. Changes are picked up on the next recording without restarting.
+Each entry is `(regex_pattern, replacement)`, matched case-insensitively in order. No restart needed.
 
 ---
 
 ## Changing the push-to-talk key
 
-### GUI App
+### GUI apps
 
-**Tray → Settings → Key Binding** — choose from a dropdown.
+**Tray → Settings → Key Binding** — dropdown, applies after listener restart.
 
-### Script
+### Terminal
 
-Edit `PTT_KEY` near the top of `listener.py`:
+Edit `PTT_KEY` near the top of `linux/terminal/listener.py`:
 
 ```python
 PTT_KEY = "f9"          # default
@@ -224,46 +271,7 @@ PTT_KEY = "scroll_lock"
 PTT_KEY = "pause"
 ```
 
-Must be a [pynput `keyboard.Key`](https://pynput.readthedocs.io/en/latest/keyboard.html#pynput.keyboard.Key) name (not a character key, or it will also type into your terminal). Restart the listener to apply.
-
----
-
-## Changing the paste method
-
-### GUI App
-
-**Tray → Settings → System** — radio buttons for paste shortcut and clipboard tool.
-
-### Script
-
-Find the `── Paste shortcut ──` section in `listener.py`:
-
-```python
-# Ctrl+Shift+V  — gnome-terminal, xterm, alacritty, kitty (default)
-# Ctrl+V        — VS Code integrated terminal
-# Shift+Insert  — universal X11 fallback
-# xdotool type  — types directly, no clipboard
-```
-
-For Wayland, switch the clipboard block from `xclip` to `wl-copy`.
-
----
-
-## View usage stats
-
-### GUI App
-
-**Tray → Stats** — shows latency, word count, GPU memory, and paste success rate in a window.
-
-### Script
-
-```bash
-# Full report
-env/bin/python stats.py
-
-# Live tail
-env/bin/python stats.py --tail
-```
+Must be a [pynput `keyboard.Key`](https://pynput.readthedocs.io/en/latest/keyboard.html#pynput.keyboard.Key) name. Restart the listener to apply.
 
 ---
 
@@ -276,90 +284,50 @@ Key released
   └─ audio saved to temp WAV
       └─ NeMo loads Parakeet TDT on GPU
           └─ corrections applied (regex post-processing)
-              └─ xclip copies to clipboard
-                  └─ xdotool focuses original window + pastes
+              └─ text copied to clipboard
+                  └─ focused window restored → paste shortcut sent
 ```
 
-The listener runs as a background process. Logs go to `/tmp/parakeet_listener.log`.
-
----
-
-## Repository layout
-
-```
-parakeet/
-│
-│  ── GUI app ──────────────────────────────────────────────
-├── parakeet_ptt/
-│   ├── main.py          entry point; wizard on first run, tray otherwise
-│   ├── tray.py          AppIndicator3 system tray + listener lifecycle
-│   ├── wizard.py        first-run setup wizard (venv, model, install)
-│   ├── settings_win.py  settings window (dictionary, key binding, system)
-│   ├── stats_win.py     stats popup
-│   ├── config.py        config r/w, path constants
-│   ├── listener.py      push-to-talk daemon (reads JSON config)
-│   ├── telemetry.py     event logger
-│   └── stats.py         report generator
-│
-│  ── Script / headless ─────────────────────────────────────
-├── listener.py          push-to-talk daemon (standalone, reads corrections.py)
-├── corrections.py       vocabulary corrections (edit this file)
-├── telemetry.py         event logger
-├── stats.py             CLI stats report
-├── install.sh           one-shot setup script
-└── start_listener.sh    generated by install.sh — launches the daemon
-│
-│  ── Packaging ─────────────────────────────────────────────
-├── packaging/
-│   ├── build_deb.sh     builds parakeet-ptt_*.deb
-│   └── debian/          dpkg control files (control, postinst, prerm)
-├── data/
-│   ├── icons/           bundled tray icon (SVG)
-│   └── parakeet-ptt.desktop
-│
-├── env/                 virtualenv (gitignored)
-└── model_cache/         model weights (gitignored)
-```
-
----
-
-## Why NeMo and not Hugging Face Transformers?
-
-The official `nvidia/parakeet-tdt-0.6b-v3` weights ship in NeMo's native checkpoint format. The TDT decoder — which gives accurate word-level timestamps and handles noisy/long-form audio better than CTC — is not yet in the stable Transformers release. NeMo is the only way to run it with the official weights.
-
-If you want to avoid NeMo, swap in `nvidia/parakeet-ctc-0.6b` with standard `transformers` — accuracy is comparable for clean audio, and no NeMo install is needed.
+Logs go to `/tmp/parakeet_listener.log` (Linux) or `%LOCALAPPDATA%\parakeet-ptt\listener.log` (Windows).
 
 ---
 
 ## Troubleshooting
 
 **Model loads but no audio is recorded**
-- Check your default mic: `arecord -l`
-- Set the correct device index: `sd.InputStream(device=N, ...)` in `listener.py`
+Check your default mic: `arecord -l` (Linux) or Settings → Sound (Windows). Set the correct device index in `listener.py`: `sd.InputStream(device=N, ...)`.
 
 **Paste does not land in the focused window**
-- Verify `xdotool` is installed: `which xdotool`
-- Try the `shift+Insert` fallback (works in all X11 terminals)
-- On Wayland: switch clipboard block to `wl-copy` in Settings or `listener.py`
+- Linux: verify `xdotool` is installed. Try `Shift+Insert` fallback in Settings.
+- Windows: verify `pywin32` is installed (`pip install pywin32`).
+- Wayland: switch clipboard tool to `wl-copy` in **Tray → Settings → System**.
 
-**`pynput` fails to listen for key events**
-- On some systems pynput needs `/dev/input` access. Run once with `sudo` to verify, then add your user to the `input` group:
-  ```bash
-  sudo usermod -aG input $USER   # logout required
-  ```
+**`pynput` fails to listen for key events (Linux)**
+Add your user to the `input` group:
+```bash
+sudo usermod -aG input $USER   # logout required
+```
 
 **NeMo install fails**
 - Ensure Python 3.10 is active: `env/bin/python --version`
-- Check the install log: `cat install.log`
 - Try: `pip install "nemo_toolkit[asr]" --no-deps` then install missing deps manually
+- Check install log in the wizard's log view
 
 **Tray icon not visible (GNOME)**
-- Enable the AppIndicator extension:
-  ```bash
-  sudo apt install gnome-shell-extension-appindicator
-  gnome-extensions enable ubuntu-appindicators@ubuntu.com
-  ```
-  Then log out and back in.
+Enable the AppIndicator extension:
+```bash
+sudo apt install gnome-shell-extension-appindicator
+gnome-extensions enable ubuntu-appindicators@ubuntu.com
+```
+Then log out and back in.
+
+---
+
+## Why NeMo and not Hugging Face Transformers?
+
+The official `nvidia/parakeet-tdt-0.6b-v3` weights ship in NeMo's native checkpoint format. The TDT decoder — which gives accurate word-level timestamps and handles noisy audio better than CTC — is not yet in the stable Transformers release. NeMo is the only way to run it with the official weights.
+
+If you want to avoid NeMo, `nvidia/parakeet-ctc-0.6b` works with standard `transformers` and has comparable accuracy for clean audio.
 
 ---
 
