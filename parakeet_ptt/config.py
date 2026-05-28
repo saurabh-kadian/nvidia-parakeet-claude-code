@@ -102,7 +102,10 @@ def load_corrections() -> list:
                 return json.load(f)
         except Exception:
             pass
-    return [list(row) for row in DEFAULT_CORRECTIONS]
+    # First run — persist defaults so the listener subprocess can find them
+    corrections = [list(row) for row in DEFAULT_CORRECTIONS]
+    save_corrections(corrections)
+    return corrections
 
 
 def save_corrections(corrections: list):

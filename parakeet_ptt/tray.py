@@ -12,7 +12,7 @@ gi.require_version("Notify", "0.7")
 from gi.repository import AppIndicator3, GLib, Gtk, Notify
 
 from pathlib import Path
-from .config import get_venv_dir
+from .config import get_venv_dir, load_corrections
 
 _LISTENER_SCRIPT = Path(__file__).parent / "listener.py"
 _ICON_DIR        = Path(__file__).parent.parent / "data" / "icons"
@@ -32,6 +32,7 @@ class TrayApp:
         Notify.init("Parakeet PTT")
         self._proc        = None
         self._ready_timer = None
+        load_corrections()  # writes defaults to disk if first run
 
         self._indicator = AppIndicator3.Indicator.new(
             _APP_ID,

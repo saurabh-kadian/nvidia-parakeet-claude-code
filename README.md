@@ -79,6 +79,9 @@ You can cancel at any time. On subsequent launches the wizard is skipped and the
 | **Tray icon → Re-run Setup Wizard** | Change venv or model location, re-download |
 | **Tray icon → Restart Listener** | Pick up config changes immediately |
 
+> [!NOTE]
+> **First transcription may not paste automatically.** After the listener starts, the very first recording sometimes lands in the clipboard but does not get pasted into your window — paste it manually with **Ctrl+Shift+V** (or your terminal's paste shortcut). Every recording after that works without any manual step. This is a one-time `xdotool` warm-up quirk and does not recur until the next time the listener process starts.
+
 ### 5. Autostart with GNOME
 
 ```bash
