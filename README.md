@@ -213,6 +213,21 @@ python windows/parakeet_ptt/main.py
 
 The setup wizard handles the NeMo install and model download on first run.
 
+### Usage
+
+| Action | Result |
+|---|---|
+| Hold **F9** | Mic starts recording |
+| Release **F9** | Audio transcribed → text pasted into focused window |
+| **Tray → Settings** | Edit corrections dictionary, change PTT key, paste method |
+| **Tray → Stats** | Latency, word count, GPU memory, paste success rate |
+| **Tray → Re-run Setup Wizard** | Change venv or model location |
+| **Tray → Restart Listener** | Pick up config changes immediately |
+| **Tray → View Log** | Open listener log in Notepad |
+
+> [!NOTE]
+> **First transcription may not paste automatically** — same one-time warm-up quirk as Linux. Paste manually with **Ctrl+V** the first time; every recording after that works automatically.
+
 ### Build a standalone `.exe`
 
 ```powershell
