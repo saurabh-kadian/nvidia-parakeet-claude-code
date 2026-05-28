@@ -8,6 +8,7 @@ Release to transcribe via Parakeet TDT 0.6B v3 and paste into the focused window
 import os
 import re
 import sys
+import time
 import signal
 import tempfile
 import threading
@@ -30,12 +31,16 @@ PTT_KEY = "f9"
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _CACHE_DIR = os.path.join(_SCRIPT_DIR, "model_cache")
 
+import telemetry as _tel
+import sys as _sys
+_sys.path.insert(0, _SCRIPT_DIR)
+
 # Load corrections — reload on each transcription so edits take effect without restart
 def _apply_corrections(text: str) -> str:
     try:
         import importlib.util, sys as _sys
         spec = importlib.util.spec_from_file_location("corrections", os.path.join(_SCRIPT_DIR, "corrections.py"))
-        mod = importlib.util.load_from_spec(spec)
+        mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         for pattern, replacement in mod.CORRECTIONS:
             text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
@@ -72,6 +77,7 @@ import nemo.collections.asr as nemo_asr
 asr_model = nemo_asr.models.ASRModel.from_pretrained(MODEL_NAME)
 asr_model.eval()
 print(f"[parakeet] Model ready. Hold {PTT_KEY.upper()} to record.", flush=True)
+_tel.session_start()
 subprocess.run(
     ["notify-send", "-i", "audio-input-microphone", "Parakeet ready", f"Hold {PTT_KEY.upper()} to record"],
     capture_output=True,  # silently skip if notify-send is not installed
@@ -84,7 +90,9 @@ _recording = False
 _audio_chunks: list = []
 _lock = threading.Lock()
 _record_thread: threading.Thread | None = None
-_target_window: str = ""  # X11 window ID captured at press time, used for paste
+_target_window: str = ""   # X11 window ID captured at press time, used for paste
+_press_ts: float = 0.0     # time F9 was pressed
+_release_ts: float = 0.0   # time F9 was released
 
 
 def _record_loop():
@@ -104,6 +112,7 @@ def _transcribe_and_paste():
 
     if len(data) < SAMPLE_RATE * MIN_DURATION_SEC:
         print("[parakeet] Clip too short — ignored.", flush=True)
+        _tel.skipped("clip_too_short")
         return
 
     tmp_path = None
@@ -112,16 +121,40 @@ def _transcribe_and_paste():
             tmp_path = f.name
             sf.write(tmp_path, data, SAMPLE_RATE)
 
+        import torch
+        gpu_before = torch.cuda.memory_allocated() / 1024**2 if torch.cuda.is_available() else 0
+        gpu_reserved = torch.cuda.memory_reserved() / 1024**2 if torch.cuda.is_available() else 0
+
+        t_infer_start = time.perf_counter()
         output = asr_model.transcribe([tmp_path])
+        inference_s = time.perf_counter() - t_infer_start
+
         # NeMo TDT output: list of Hypothesis objects with .text attribute
         text = (output[0].text if hasattr(output[0], "text") else str(output[0])).strip()
 
         if not text:
             print("[parakeet] Empty transcription.", flush=True)
+            _tel.skipped("empty_transcription")
             return
 
+        raw_text = text
         text = _apply_corrections(text)
+        corrections_applied = int(text != raw_text)
+
+        total_latency_s = time.perf_counter() - _release_ts
         print(f"[parakeet] Transcribed: {text}", flush=True)
+        print(f"[parakeet] inference={inference_s:.2f}s  total={total_latency_s:.2f}s  gpu={gpu_before:.0f}MB", flush=True)
+
+        _tel.transcription_complete(
+            inference_s=inference_s,
+            total_latency_s=total_latency_s,
+            word_count=len(text.split()),
+            char_count=len(text),
+            corrections_applied=corrections_applied,
+            gpu_mem_used_mb=gpu_before,
+            gpu_mem_reserved_mb=gpu_reserved,
+            text=text,
+        )
 
         # ── Clipboard + paste ──────────────────────────────────────────────────
         # Choose the clipboard tool that matches your system, then choose the
@@ -155,6 +188,7 @@ def _transcribe_and_paste():
         # Ctrl+Shift+V — standard for most Linux terminals (gnome-terminal, xterm, alacritty, kitty)
         result = subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+shift+v"], capture_output=True)
         print(f"[parakeet] paste exit={result.returncode}", flush=True)
+        _tel.paste_result(result.returncode)
 
         # Ctrl+V — works in some terminals (Windows-style, VS Code integrated terminal)
         # subprocess.run(["xdotool", "key", "--clearmodifiers", "ctrl+v"])
@@ -169,6 +203,7 @@ def _transcribe_and_paste():
 
     except Exception as exc:
         print(f"[parakeet] Error during transcription: {exc}", flush=True)
+        _tel.error("transcription", str(exc))
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
@@ -182,9 +217,9 @@ from pynput import keyboard
 _PTT = getattr(keyboard.Key, PTT_KEY)
 
 def on_press(key):
-    global _recording, _record_thread, _target_window
+    global _recording, _record_thread, _target_window, _press_ts
     if key == _PTT and not _recording:
-        # Capture the focused window NOW so paste targets it even after a delay
+        _press_ts = time.perf_counter()
         result = subprocess.run(["xdotool", "getactivewindow"], capture_output=True, text=True)
         _target_window = result.stdout.strip()
         _recording = True
@@ -193,6 +228,7 @@ def on_press(key):
         _record_thread = threading.Thread(target=_record_loop, daemon=True)
         _record_thread.start()
         print(f"[parakeet] Recording... (window {_target_window})", flush=True)
+        _tel.recording_start(_target_window)
         subprocess.run(
             ["notify-send", "-i", "audio-input-microphone", "-t", "60000",
              "🎙 Recording", f"Release {PTT_KEY.upper()} to transcribe"],
@@ -201,11 +237,14 @@ def on_press(key):
 
 
 def on_release(key):
-    global _recording
+    global _recording, _release_ts
     if key == _PTT and _recording:
+        _release_ts = time.perf_counter()
         _recording = False
+        duration_s = _release_ts - _press_ts
         if _record_thread:
             _record_thread.join(timeout=3)
+        _tel.recording_end(duration_s)
         subprocess.run(
             ["notify-send", "-i", "system-run", "-t", "4000",
              "⏳ Transcribing", "Parakeet is processing your audio..."],

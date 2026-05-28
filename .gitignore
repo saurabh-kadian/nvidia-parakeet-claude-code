@@ -6,3 +6,5 @@ start_listener.sh
 install.log
 __pycache__/
 *.pyc
+telemetry.jsonl
+*.deb

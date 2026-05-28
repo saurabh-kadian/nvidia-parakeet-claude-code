@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+configure)
+    # Ensure system audio deps are present (they're in Depends but belt-and-suspenders)
+    apt-get install -y --no-install-recommends \
+        portaudio19-dev libsndfile1 libgirepository1.0-dev 2>/dev/null || true
+
+    # Register the desktop entry
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database /usr/share/applications || true
+    fi
+    ;;
+esac
+
+exit 0

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Parakeet PTT
+GenericName=Voice Dictation
+Comment=Push-to-talk voice transcription powered by NVIDIA Parakeet TDT
+Exec=parakeet-ptt
+Icon=audio-input-microphone
+Categories=Accessibility;AudioVideo;Audio;
+Keywords=voice;dictation;transcription;speech;microphone;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+remove|upgrade|deconfigure)
+    # Stop any running listener
+    if [ -f /tmp/parakeet_listener.pid ]; then
+        pid=$(cat /tmp/parakeet_listener.pid)
+        kill "$pid" 2>/dev/null || true
+    fi
+    ;;
+esac
+
+exit 0
