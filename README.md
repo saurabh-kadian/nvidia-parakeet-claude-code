@@ -335,3 +335,7 @@ If you want to avoid NeMo, `nvidia/parakeet-ctc-0.6b` works with standard `trans
 
 Model weights: [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) (NVIDIA)  
 This repo: MIT
+
+---
+
+## Code and Readme courtesy ClaudeCode
